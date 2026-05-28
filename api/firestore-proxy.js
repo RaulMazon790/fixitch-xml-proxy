@@ -1,5 +1,5 @@
 // api/firestore-proxy.js
-import { Builder } from 'xml2js';
+const { Builder } = require('xml2js');
 
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
 const PROJECT_ID = 'fixitch-597f6';
@@ -50,8 +50,8 @@ function firestoreJsonToXml(jsonData, rootName = 'firestoreResponse') {
   }).buildObject({ [rootName]: cleanedData });
 }
 
-// Handler compatible con Vercel Serverless Functions
-export default async function handler(req, res) {
+// ✅ Handler compatible con Vercel (CommonJS export)
+module.exports = async function handler(req, res) {
   const { method, headers, body } = req;
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
@@ -93,4 +93,4 @@ export default async function handler(req, res) {
     console.error('Proxy error:', error);
     return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
-}
+};
