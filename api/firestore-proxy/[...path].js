@@ -1,4 +1,4 @@
-// api/firestore-proxy.js
+// api/firestore-proxy/[...path].js
 const { Builder } = require('xml2js');
 
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
@@ -59,7 +59,7 @@ function cleanFirestoreResponse(jsonData) {
 
 // Handler principal
 module.exports = async function handler(req, res) {
-  const { method, headers } = req;
+  const { method, headers, query } = req;
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
 
@@ -68,16 +68,20 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: 'Authorization header required' });
   }
 
-  // Extraer Ruta: /api/firestore-proxy/requests/ABC123 
-  // req.url incluye query params, así que los separamos
-  const urlParts = req.url.split('?');
-  const rawPath = urlParts[0].replace(/^\/api\/firestore-proxy/, '');
-  const queryString = urlParts[1] ? `?${urlParts[1]}` : '';
-  
-  const dynamicPath = rawPath || '';
+  // Extraer ruta dinámica desde query.path (catch-all de Vercel)
+  // query.path es un array: ['requests'] o ['requests', 'ID']
+  let pathSegment = '';
+  if (query.path && Array.isArray(query.path)) {
+    pathSegment = '/' + query.path.join('/');
+  }
 
-  // Construir URL de Firestore (con query params si existen)
-  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${dynamicPath}${queryString}`;
+  // Eextraer query string manualmente desde req.url
+  // req.url puede ser: /api/firestore-proxy/requests/ID?updateMask.fieldPaths=estado
+  const queryString = req.url?.includes('?') ? req.url.split('?')[1] : '';
+  const queryParams = queryString ? `?${queryString}` : '';
+
+  // Construir URL de Firestore: ruta + query params
+  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${pathSegment}${queryParams}`;
 
   try {
     const firestoreHeaders = {
