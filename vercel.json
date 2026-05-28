@@ -8,7 +8,6 @@
   "rewrites": [
     {
       "source": "/firestore/:path*",
-@@ -20,8 +15,5 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization,Content-Type,Accept" }
       ]
     }
@@ -16,5 +15,4 @@
   "github": {
     "silent": true
   }
-  ]
 }
