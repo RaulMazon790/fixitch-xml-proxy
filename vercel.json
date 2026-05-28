@@ -1,19 +1,20 @@
 {
   "version": 2,
+  "functions": {
+    "api/*.js": {
+      "runtime": "nodejs24.x"
+    }
+  },
   "rewrites": [
     {
       "source": "/firestore/:path*",
-      "destination": "/api/firestore-proxy"
-    }
-  ],
-  "headers": [
-    {
-      "source": "/firestore/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PUT,PATCH,DELETE,OPTIONS" },
+@@ -20,8 +15,5 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization,Content-Type,Accept" }
       ]
     }
+  ],
+  "github": {
+    "silent": true
+  }
   ]
 }
