@@ -1,0 +1,11 @@
+{
+  "name": "fixitch-xml-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "xml2js": "^0.6.2"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
