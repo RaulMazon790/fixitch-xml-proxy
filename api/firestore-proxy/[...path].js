@@ -59,7 +59,7 @@ function cleanFirestoreResponse(jsonData) {
 
 // Handler principal
 module.exports = async function handler(req, res) {
-  const { method, headers, query } = req;
+  const { method, headers } = req;
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
 
@@ -68,20 +68,20 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: 'Authorization header required' });
   }
 
-  // Extraer ruta dinámica desde query.path (catch-all de Vercel)
-  // query.path es un array: ['requests'] o ['requests', 'ID']
-  let pathSegment = '';
-  if (query.path && Array.isArray(query.path)) {
-    pathSegment = '/' + query.path.join('/');
-  }
+  // Extraer rutas y query params req.url
+  // req.url ejemplo: /api/firestore-proxy/requests/ID?updateMask.fieldPaths=estado
+  const urlParts = (req.url || '').split('?');
+  const rawPath = urlParts[0].replace(/^\/api\/firestore-proxy/, '');
+  const queryString = urlParts[1] || '';
 
-  // Eextraer query string manualmente desde req.url
-  // req.url puede ser: /api/firestore-proxy/requests/ID?updateMask.fieldPaths=estado
-  const queryString = req.url?.includes('?') ? req.url.split('?')[1] : '';
-  const queryParams = queryString ? `?${queryString}` : '';
+  // Construir segmentos de ruta
+  const pathSegment = rawPath ? '/' + rawPath : '';
+  const queryParams = queryString ? '?' + queryString : '';
 
-  // Construir URL de Firestore: ruta + query params
+  // URL final de Firestore
   const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${pathSegment}${queryParams}`;
+
+  console.log('Firestore URL:', firestoreUrl); // Para debug en logs de Verce
 
   try {
     const firestoreHeaders = {
