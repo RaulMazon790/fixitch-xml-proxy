@@ -1,147 +1,113 @@
-// api/firestore-proxy/[...path].js
-const { Builder } = require('xml2js');
-
-const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
-const PROJECT_ID = 'fixitch-597f6';
-const DATABASE = '(default)';
-
-// === HELPERS PARA LIMPIEZA DE DATOS ===
-function unwrapValue(field) {
-  if (!field) return null;
-  if (field.stringValue !== undefined) return field.stringValue;
-  if (field.integerValue !== undefined) return parseInt(field.integerValue);
-  if (field.arrayValue?.values) {
-    return field.arrayValue.values.map(v => unwrapValue(v));
-  }
-  if (field.timestampValue) return field.timestampValue;
-  if (field.booleanValue !== undefined) return field.booleanValue;
-  if (field.nullValue !== undefined) return null;
-  if (typeof field === 'object') {
-    const cleaned = {};
-    for (const [k, v] of Object.entries(field)) {
-      cleaned[k] = unwrapValue(v);
-    }
-    return cleaned;
-  }
-  return field;
-}
-
-function cleanDocument(doc) {
-  const cleaned = { id: doc.name?.split('/').pop() };
-  if (doc.fields) {
-    for (const [key, value] of Object.entries(doc.fields)) {
-      cleaned[key] = unwrapValue(value);
-    }
-  }
-  return cleaned;
-}
-
-function cleanFirestoreResponse(jsonData) {
-  let cleaned = { ...jsonData };
-  if (cleaned.documents && Array.isArray(cleaned.documents)) {
-    cleaned.documents = cleaned.documents.map(cleanDocument);
-  } else if (cleaned.fields) {
-    cleaned = cleanDocument(cleaned);
-  }
-  return cleaned;
-}
-
-// === HELPER PARA CONVERTIR JSON → XML ===
-function jsonToXml(obj, rootName = 'firestoreResponse') {
-  return new Builder({
-    headless: false,
-    renderOpts: { pretty: true, indent: '  ' },
-    xmldec: { version: '1.0', encoding: 'UTF-8' }
-  }).buildObject({ [rootName]: obj });
-}
-
-// === HANDLER PRINCIPAL ===
+// api/firestore-proxy/[...path].js - Versión con debug máximo
 module.exports = async function handler(req, res) {
   const { method, headers, query } = req;
+  
+  // === DEBUG: Log de entrada ===
+  console.log('📥 Request received:', {
+    method,
+    url: req.url,
+    query: query,
+    headers: {
+      authorization: headers['authorization'] ? 'Bearer ***' : 'MISSING',
+      accept: headers['accept']
+    }
+  });
+
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
 
-  // Validar autenticación
+  // Validar token
   if (!authToken || !authToken.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Authorization header required' });
+    return res.status(401).json({ 
+      error: 'Authorization header required',
+      received: authToken ? 'Present but invalid format' : 'Missing'
+    });
   }
 
-  // Extraer ruta: query.path de Vercel catch-all
-  // Ej: /api/firestore-proxy/requests/ID → query.path = ['requests', 'ID']
-  const pathSegments = Array.isArray(query.path) ? query.path : [];
-  const firestorePath = pathSegments.length > 0 ? '/' + pathSegments.join('/') : '';
-
-  // Extraer query string desde req.url
-  // Ej: req.url = "/api/firestore-proxy/requests/ID?updateMask.fieldPaths=estado"
-  const urlParts = (req.url || '').split('?');
-  const queryString = urlParts.length > 1 ? '?' + urlParts[1] : '';
+  // === OPCIÓN A: Hardcode para prueba (descomenta para probar) ===
+  // Esto ignora query.path y usa una ruta fija conocida
+  // const dynamicPath = '/requests';  // ← Descomenta esta línea para probar
+  
+  // === OPCIÓN B: Ruta dinámica normal ===
+  const dynamicPath = query.path ? `/${query.path.join('/')}` : '';
+  
+  console.log('🔗 Dynamic path:', dynamicPath);
 
   // Construir URL de Firestore
-  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${firestorePath}${queryString}`;
+  const PROJECT_ID = 'fixitch-597f6';
+  const DATABASE = '(default)';
+  const firestoreUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/${DATABASE}/documents${dynamicPath}`;
+  
+  console.log('🌐 Firestore URL:', firestoreUrl);
+  console.log('🔑 Token preview:', authToken.substring(0, 30) + '...');
 
   try {
-    const firestoreHeaders = {
-      'Authorization': authToken,
-      'Content-Type': 'application/json'
-    };
-
-    const fetchOptions = {
+    const firestoreResponse = await fetch(firestoreUrl, {
       method: method,
-      headers: firestoreHeaders,
-    };
+      headers: {
+        'Authorization': authToken,
+        'Content-Type': 'application/json',
+      },
+      // Agregar timeout para evitar cuelgues
+      signal: AbortSignal.timeout(10000) // 10 segundos
+    });
 
-    if (['POST', 'PUT', 'PATCH'].includes(method) && req.body) {
-      fetchOptions.body = JSON.stringify(req.body);
-    }
+    console.log('📤 Firestore response status:', firestoreResponse.status);
+    console.log('📤 Firestore response headers:', Object.fromEntries(firestoreResponse.headers.entries()));
 
-    const firestoreResponse = await fetch(firestoreUrl, fetchOptions);
-    const statusCode = firestoreResponse.status;
+    // Leer respuesta como texto primero
     const responseText = await firestoreResponse.text();
+    console.log('📄 Response body preview:', responseText.substring(0, 300));
 
     // Verificar si es HTML de error
     if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
       return res.status(502).json({
-        error: 'Firestore returned HTML error',
-        status: statusCode,
-        url: firestoreUrl
+        error: 'Firestore returned HTML error page',
+        firestoreStatus: firestoreResponse.status,
+        firestoreUrl: firestoreUrl,
+        hint: 'Revisa: 1) Token válido, 2) Collection existe, 3) URL correcta',
+        htmlPreview: responseText.substring(0, 500)
       });
     }
 
     // Parsear JSON
     let firestoreData;
     try {
-      firestoreData = responseText ? JSON.parse(responseText) : {};
+      firestoreData = JSON.parse(responseText);
     } catch (parseError) {
       return res.status(502).json({
         error: 'Failed to parse Firestore response',
-        raw: responseText.substring(0, 200)
+        rawBody: responseText.substring(0, 300),
+        parseError: parseError.message
       });
     }
 
-    // === DETERMINAR FORMATO DE SALIDA: JSON o XML ===
+    // Respuesta exitosa
     const wantsXml = acceptHeader.includes('xml');
-    const cleanedData = cleanFirestoreResponse(firestoreData);
-
     if (wantsXml) {
-      // Convertir a XML
-      const xmlOutput = jsonToXml(cleanedData, 'firestoreResponse');
-      return res
-        .status(statusCode)
-        .setHeader('Content-Type', 'application/xml; charset=utf-8')
-        .send(xmlOutput);
+      return res.status(firestoreResponse.status).json({
+        message: "XML conversion ready in next step",
+        data: firestoreData
+      });
     } else {
-      // Devolver JSON limpio
-      return res
-        .status(statusCode)
-        .setHeader('Content-Type', 'application/json')
-        .json(cleanedData);
+      return res.status(firestoreResponse.status).json(firestoreData);
     }
 
   } catch (error) {
-    console.error('❌ Proxy error:', error);
+    console.error('❌ Proxy error:', {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    });
+    
+    if (error.name === 'TimeoutError' || error.message.includes('timeout')) {
+      return res.status(504).json({ error: 'Timeout connecting to Firestore' });
+    }
+    
     return res.status(500).json({ 
       error: 'Internal server error', 
-      details: error.message 
+      details: error.message,
+      name: error.name
     });
   }
 };
