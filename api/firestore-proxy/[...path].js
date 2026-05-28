@@ -1,11 +1,11 @@
-// api/firestore-proxy/[...path].js - TU CÓDIGO FUNCIONAL + XML
+// api/firestore-proxy/[...path].js
 const { Builder } = require('xml2js');
 
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
 const PROJECT_ID = 'fixitch-597f6';
 const DATABASE = '(default)';
 
-// ===== HELPERS PARA CONVERSIÓN XML (NUEVOS) =====
+// ===== HELPERS PARA XML =====
 function unwrapValue(field) {
   if (!field) return null;
   if (field.stringValue !== undefined) return field.stringValue;
@@ -37,11 +37,12 @@ function cleanDocument(doc) {
 }
 
 function jsonToXml(obj, rootName = 'firestoreResponse') {
-  return new Builder({
+  const builder = new Builder({
     headless: false,
     renderOpts: { pretty: true, indent: '  ' },
     xmldec: { version: '1.0', encoding: 'UTF-8' }
-  }).buildObject({ [rootName]: obj });
+  });
+  return builder.buildObject({ [rootName]: obj });
 }
 
 function cleanFirestoreResponse(jsonData) {
@@ -54,74 +55,83 @@ function cleanFirestoreResponse(jsonData) {
   return cleaned;
 }
 
-// ===== TU CÓDIGO ORIGINAL (CON MINIMOS CAMBIOS) =====
+// ===== FUNCIÓN PRINCIPAL =====
 module.exports = async function handler(req, res) {
-  const { method, headers, query } = req;
-  
-  // === DEBUG: Log de entrada ===
-  console.log('📥 Request received:', {
-    method,
-    url: req.url,
-    query: query,
-    headers: {
-      authorization: headers['authorization'] ? 'Bearer ***' : 'MISSING',
-      accept: headers['accept']
-    }
-  });
+  const { method, headers } = req;
 
-  const acceptHeader = headers['accept'] || 'application/json';
-  const authToken = headers['authorization'];
-
-  // Validar token
-  if (!authToken || !authToken.startsWith('Bearer ')) {
-    return res.status(401).json({ 
-      error: 'Authorization header required',
-      received: authToken ? 'Present but invalid format' : 'Missing'
-    });
+  // 1. Responder a preflight OPTIONS (CORS)
+  if (method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,Accept');
+    return res.status(204).end();
   }
 
-  // === RUTA DINÁMICA SIMPLE (extraer de req.url) ===
-  // req.url = "/api/firestore-proxy/requests?foo=bar"
-  // Resultado: "/requests?foo=bar"
+  // 2. Validar token (solo para otros métodos)
+  const authToken = headers.authorization;
+  if (!authToken || !authToken.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header required (Bearer token)' });
+  }
+
+  // 3. Construir la URL de Firestore respetando path dinámico y query string
+  //    req.url = "/api/firestore-proxy/requests?orderBy=createdAt"
+  //    pathWithQuery = "/requests?orderBy=createdAt"
   const pathWithQuery = (req.url || '').replace(/^\/api\/firestore-proxy/, '');
-  
-  // Construir URL de Firestore
   const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${pathWithQuery}`;
-  
-  console.log('🔗 Dynamic path:', pathWithQuery.split('?')[0]);
-  console.log('🌐 Firestore URL:', firestoreUrl);
-  console.log('🔑 Token preview:', authToken.substring(0, 30) + '...');
+
+  console.log('➡️ Proxy request:', { method, firestoreUrl });
+
+  // 4. Leer el cuerpo de la petición original (importante para POST, PATCH, etc.)
+  let body = null;
+  const contentType = headers['content-type'] || '';
+
+  if (method !== 'GET' && method !== 'HEAD') {
+    // Para métodos con cuerpo, extraemos el raw body
+    body = await new Promise((resolve, reject) => {
+      let data = '';
+      req.on('data', chunk => { data += chunk; });
+      req.on('end', () => resolve(data || null));
+      req.on('error', reject);
+    });
+    
+    // Si el cliente envió JSON y el body no está vacío, lo parseamos (opcional, para validar)
+    if (contentType.includes('application/json') && body) {
+      try {
+        // Solo validamos, luego reenviamos el mismo string
+        JSON.parse(body);
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid JSON body' });
+      }
+    }
+  }
+
+  // 5. Hacer la petición a Firestore
+  const fetchOptions = {
+    method: method,
+    headers: {
+      'Authorization': authToken,
+      'Content-Type': contentType || 'application/json',  // importante respetar el tipo
+    },
+    // Solo añadir body si existe y no es GET/HEAD
+    ...(body && method !== 'GET' && method !== 'HEAD' ? { body } : {}),
+    signal: AbortSignal.timeout(15000)
+  };
 
   try {
-    const firestoreResponse = await fetch(firestoreUrl, {
-      method: method,
-      headers: {
-        'Authorization': authToken,
-        'Content-Type': 'application/json',
-      },
-      // Agregar timeout para evitar cuelgues
-      signal: AbortSignal.timeout(10000) // 10 segundos
-    });
-
-    console.log('📤 Firestore response status:', firestoreResponse.status);
-    console.log('📤 Firestore response headers:', Object.fromEntries(firestoreResponse.headers.entries()));
-
-    // Leer respuesta como texto primero
+    const firestoreResponse = await fetch(firestoreUrl, fetchOptions);
     const responseText = await firestoreResponse.text();
-    console.log('📄 Response body preview:', responseText.substring(0, 300));
 
-    // Verificar si es HTML de error
+    // Si Firestore devuelve HTML (error de autenticación/ruta)
     if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
       return res.status(502).json({
         error: 'Firestore returned HTML error page',
         firestoreStatus: firestoreResponse.status,
-        firestoreUrl: firestoreUrl,
-        hint: 'Revisa: 1) Token válido, 2) Collection existe, 3) URL correcta',
-        htmlPreview: responseText.substring(0, 500)
+        firestoreUrl,
+        hint: 'Verifica que el token tenga acceso y que la colección exista'
       });
     }
 
-    // Parsear JSON
+    // Intentar parsear como JSON
     let firestoreData;
     try {
       firestoreData = JSON.parse(responseText);
@@ -133,39 +143,27 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // ===== CONVERSIÓN A XML (SOLO SI SE SOLICITA) =====
+    // 6. Decidir formato de salida (JSON o XML)
+    const acceptHeader = headers.accept || 'application/json';
     const wantsXml = acceptHeader.includes('xml');
-    
+
     if (wantsXml) {
-      // Limpiar datos de Firestore y convertir a XML
-      const cleanedData = cleanFirestoreResponse(firestoreData);
-      const xmlOutput = jsonToXml(cleanedData, 'firestoreResponse');
-      
-      // Devolver XML con header correcto
-      return res
-        .status(firestoreResponse.status)
-        .setHeader('Content-Type', 'application/xml; charset=utf-8')
-        .send(xmlOutput);
+      const cleaned = cleanFirestoreResponse(firestoreData);
+      const xmlOutput = jsonToXml(cleaned, 'firestoreResponse');
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      return res.status(firestoreResponse.status).send(xmlOutput);
     } else {
-      // ===== COMPORTAMIENTO ORIGINAL: DEVOLVER JSON =====
+      res.setHeader('Content-Type', 'application/json');
+      res.setHeader('Access-Control-Allow-Origin', '*');
       return res.status(firestoreResponse.status).json(firestoreData);
     }
 
   } catch (error) {
-    console.error('❌ Proxy error:', {
-      name: error.name,
-      message: error.message,
-      stack: error.stack
-    });
-    
+    console.error('❌ Proxy error:', error);
     if (error.name === 'TimeoutError' || error.message.includes('timeout')) {
       return res.status(504).json({ error: 'Timeout connecting to Firestore' });
     }
-    
-    return res.status(500).json({ 
-      error: 'Internal server error', 
-      details: error.message,
-      name: error.name
-    });
+    return res.status(500).json({ error: 'Internal server error', details: error.message });
   }
 };
