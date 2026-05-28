@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/firestore/:path*",
-      "destination": "/api/firestore-proxy/:path*"
+      "destination": "/api/firestore-proxy"
     }
   ],
   "headers": [
