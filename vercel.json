@@ -2,8 +2,8 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/firestore/:path*",
-      "destination": "/api/firestore-proxy/[...path]"
+      "source": "/firestore/(.*)",
+      "destination": "/api/firestore-proxy"
     }
   ],
   "headers": [
