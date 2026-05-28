@@ -9,7 +9,6 @@
     {
       "source": "/firestore/:path*",
         { "key": "Access-Control-Allow-Headers", "value": "Authorization,Content-Type,Accept" }
-      ]
     }
   ],
   "github": {
