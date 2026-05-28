@@ -5,7 +5,7 @@ const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
 const PROJECT_ID = 'fixitch-597f6';
 const DATABASE = '(default)';
 
-// Helper: "Desenvolver" los wrappers de tipo de Firestore
+// === HELPERS PARA LIMPIEZA DE DATOS ===
 function unwrapValue(field) {
   if (!field) return null;
   if (field.stringValue !== undefined) return field.stringValue;
@@ -26,7 +26,6 @@ function unwrapValue(field) {
   return field;
 }
 
-// Helper: Limpiar documento de Firestore
 function cleanDocument(doc) {
   const cleaned = { id: doc.name?.split('/').pop() };
   if (doc.fields) {
@@ -37,16 +36,6 @@ function cleanDocument(doc) {
   return cleaned;
 }
 
-// Helper: Convertir JSON limpio a XML
-function jsonToXml(obj, rootName = 'firestoreResponse') {
-  return new Builder({
-    headless: false,
-    renderOpts: { pretty: true, indent: '  ' },
-    xmldec: { version: '1.0', encoding: 'UTF-8' }
-  }).buildObject({ [rootName]: obj });
-}
-
-// Helper: Limpiar respuesta completa de Firestore
 function cleanFirestoreResponse(jsonData) {
   let cleaned = { ...jsonData };
   if (cleaned.documents && Array.isArray(cleaned.documents)) {
@@ -57,9 +46,18 @@ function cleanFirestoreResponse(jsonData) {
   return cleaned;
 }
 
-// Handler principal
+// === HELPER PARA CONVERTIR JSON → XML ===
+function jsonToXml(obj, rootName = 'firestoreResponse') {
+  return new Builder({
+    headless: false,
+    renderOpts: { pretty: true, indent: '  ' },
+    xmldec: { version: '1.0', encoding: 'UTF-8' }
+  }).buildObject({ [rootName]: obj });
+}
+
+// === HANDLER PRINCIPAL ===
 module.exports = async function handler(req, res) {
-  const { method, headers } = req;
+  const { method, headers, query } = req;
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
 
@@ -68,20 +66,18 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: 'Authorization header required' });
   }
 
-  // Extraer rutas y query params req.url
-  // req.url ejemplo: /api/firestore-proxy/requests/ID?updateMask.fieldPaths=estado
+  // Extraer ruta: query.path de Vercel catch-all
+  // Ej: /api/firestore-proxy/requests/ID → query.path = ['requests', 'ID']
+  const pathSegments = Array.isArray(query.path) ? query.path : [];
+  const firestorePath = pathSegments.length > 0 ? '/' + pathSegments.join('/') : '';
+
+  // Extraer query string desde req.url
+  // Ej: req.url = "/api/firestore-proxy/requests/ID?updateMask.fieldPaths=estado"
   const urlParts = (req.url || '').split('?');
-  const rawPath = urlParts[0].replace(/^\/api\/firestore-proxy/, '');
-  const queryString = urlParts[1] || '';
+  const queryString = urlParts.length > 1 ? '?' + urlParts[1] : '';
 
-  // Construir segmentos de ruta
-  const pathSegment = rawPath ? '/' + rawPath : '';
-  const queryParams = queryString ? '?' + queryString : '';
-
-  // URL final de Firestore
-  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${pathSegment}${queryParams}`;
-
-  console.log('Firestore URL:', firestoreUrl); // Para debug en logs de Verce
+  // Construir URL de Firestore
+  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${firestorePath}${queryString}`;
 
   try {
     const firestoreHeaders = {
@@ -94,7 +90,6 @@ module.exports = async function handler(req, res) {
       headers: firestoreHeaders,
     };
 
-    // Agregar body solo para POST/PUT/PATCH
     if (['POST', 'PUT', 'PATCH'].includes(method) && req.body) {
       fetchOptions.body = JSON.stringify(req.body);
     }
@@ -123,18 +118,19 @@ module.exports = async function handler(req, res) {
       });
     }
 
-    // Determinar formato de salida
+    // === DETERMINAR FORMATO DE SALIDA: JSON o XML ===
     const wantsXml = acceptHeader.includes('xml');
+    const cleanedData = cleanFirestoreResponse(firestoreData);
 
     if (wantsXml) {
-      const cleanedData = cleanFirestoreResponse(firestoreData);
+      // Convertir a XML
       const xmlOutput = jsonToXml(cleanedData, 'firestoreResponse');
       return res
         .status(statusCode)
         .setHeader('Content-Type', 'application/xml; charset=utf-8')
         .send(xmlOutput);
     } else {
-      const cleanedData = cleanFirestoreResponse(firestoreData);
+      // Devolver JSON limpio
       return res
         .status(statusCode)
         .setHeader('Content-Type', 'application/json')
@@ -142,7 +138,7 @@ module.exports = async function handler(req, res) {
     }
 
   } catch (error) {
-    console.error('Proxy error:', error);
+    console.error('❌ Proxy error:', error);
     return res.status(500).json({ 
       error: 'Internal server error', 
       details: error.message 
