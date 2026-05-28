@@ -1,5 +1,10 @@
 {
   "version": 2,
+  "functions": {
+    "api/*.js": {
+      "runtime": "nodejs24.x"
+    }
+  },
   "rewrites": [
     {
       "source": "/firestore/:path*",
@@ -15,5 +20,8 @@
         { "key": "Access-Control-Allow-Headers", "value": "Authorization,Content-Type,Accept" }
       ]
     }
-  ]
+  ],
+  "github": {
+    "silent": true
+  }
 }
