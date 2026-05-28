@@ -50,7 +50,6 @@ function firestoreJsonToXml(jsonData, rootName = 'firestoreResponse') {
   }).buildObject({ [rootName]: cleanedData });
 }
 
-// ✅ Handler compatible con Vercel (CommonJS export)
 module.exports = async function handler(req, res) {
   const { method, headers, body } = req;
   const acceptHeader = headers['accept'] || 'application/json';
