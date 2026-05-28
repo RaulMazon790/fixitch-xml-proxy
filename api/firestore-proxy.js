@@ -1,4 +1,4 @@
-// api/firestore-proxy/[...path].js
+// api/firestore-proxy.js
 const { Builder } = require('xml2js');
 
 const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
@@ -49,22 +49,17 @@ function jsonToXml(obj, rootName = 'firestoreResponse') {
 // Helper: Limpiar respuesta completa de Firestore
 function cleanFirestoreResponse(jsonData) {
   let cleaned = { ...jsonData };
-  
-  // Si es lista de documentos
   if (cleaned.documents && Array.isArray(cleaned.documents)) {
     cleaned.documents = cleaned.documents.map(cleanDocument);
-  }
-  // Si es documento individual
-  else if (cleaned.fields) {
+  } else if (cleaned.fields) {
     cleaned = cleanDocument(cleaned);
   }
-  
   return cleaned;
 }
 
 // Handler principal
 module.exports = async function handler(req, res) {
-  const { method, headers, query } = req;
+  const { method, headers } = req;
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
 
@@ -73,30 +68,23 @@ module.exports = async function handler(req, res) {
     return res.status(401).json({ error: 'Authorization header required' });
   }
 
-  // Construir ruta dinámica desde query.path (catch-all de Vercel)
-  let dynamicPath = '';
-  if (Array.isArray(query.path) && query.path.length > 0) {
-    dynamicPath = `/${query.path.join('/')}`;
-  }
-  // Fallback: extraer de req.url si query.path no está disponible
-  else if (req.url) {
-    dynamicPath = req.url.replace(/^\/api\/firestore-proxy/, '');
-    if (dynamicPath && !dynamicPath.startsWith('/')) {
-      dynamicPath = '/' + dynamicPath;
-    }
-  }
+  // Extraer Ruta: /api/firestore-proxy/requests/ABC123 
+  // req.url incluye query params, así que los separamos
+  const urlParts = req.url.split('?');
+  const rawPath = urlParts[0].replace(/^\/api\/firestore-proxy/, '');
+  const queryString = urlParts[1] ? `?${urlParts[1]}` : '';
+  
+  const dynamicPath = rawPath || '';
 
-  // Construir URL de Firestore
-  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${dynamicPath}`;
+  // Construir URL de Firestore (con query params si existen)
+  const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${dynamicPath}${queryString}`;
 
   try {
-    // Preparar headers para Firestore
     const firestoreHeaders = {
       'Authorization': authToken,
       'Content-Type': 'application/json'
     };
 
-    // Preparar body para métodos que lo requieren
     const fetchOptions = {
       method: method,
       headers: firestoreHeaders,
@@ -107,13 +95,10 @@ module.exports = async function handler(req, res) {
       fetchOptions.body = JSON.stringify(req.body);
     }
 
-    // Llamar a Firestore
     const firestoreResponse = await fetch(firestoreUrl, fetchOptions);
     const statusCode = firestoreResponse.status;
-    
-    // Leer respuesta como texto primero para manejar errores
     const responseText = await firestoreResponse.text();
-    
+
     // Verificar si es HTML de error
     if (responseText.trim().startsWith('<!DOCTYPE') || responseText.trim().startsWith('<html')) {
       return res.status(502).json({
@@ -138,16 +123,13 @@ module.exports = async function handler(req, res) {
     const wantsXml = acceptHeader.includes('xml');
 
     if (wantsXml) {
-      // Limpiar datos y convertir a XML
       const cleanedData = cleanFirestoreResponse(firestoreData);
       const xmlOutput = jsonToXml(cleanedData, 'firestoreResponse');
-      
       return res
         .status(statusCode)
         .setHeader('Content-Type', 'application/xml; charset=utf-8')
         .send(xmlOutput);
     } else {
-      // Devolver JSON limpio
       const cleanedData = cleanFirestoreResponse(firestoreData);
       return res
         .status(statusCode)
@@ -156,7 +138,7 @@ module.exports = async function handler(req, res) {
     }
 
   } catch (error) {
-    console.error('❌ Proxy error:', error);
+    console.error('Proxy error:', error);
     return res.status(500).json({ 
       error: 'Internal server error', 
       details: error.message 
