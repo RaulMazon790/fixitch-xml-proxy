@@ -26,10 +26,7 @@ module.exports = async function handler(req, res) {
 
   // === OPCIÓN A: Hardcode para prueba (descomenta para probar) ===
   // Esto ignora query.path y usa una ruta fija conocida
-  // const dynamicPath = '/requests';  // ← Descomenta esta línea para probar
-  
-  // === OPCIÓN B: Ruta dinámica normal ===
-  const dynamicPath = query.path ? `/${query.path.join('/')}` : '';
+  const dynamicPath = '/requests';  // ← Descomenta esta línea para probar
   
   console.log('🔗 Dynamic path:', dynamicPath);
 
