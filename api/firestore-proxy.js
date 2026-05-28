@@ -5,6 +5,7 @@ const FIRESTORE_BASE = 'https://firestore.googleapis.com/v1';
 const PROJECT_ID = 'fixitch-597f6';
 const DATABASE = '(default)';
 
+// Helper: Convertir JSON de Firestore a XML legible
 function firestoreJsonToXml(jsonData, rootName = 'firestoreResponse') {
   function unwrapValue(field) {
     if (!field) return null;
@@ -49,19 +50,23 @@ function firestoreJsonToXml(jsonData, rootName = 'firestoreResponse') {
   }).buildObject({ [rootName]: cleanedData });
 }
 
+// Handler compatible con Vercel Serverless Functions
 export default async function handler(req, res) {
   const { method, headers, body } = req;
   const acceptHeader = headers['accept'] || 'application/json';
   const authToken = headers['authorization'];
 
+  // Validar autenticación
   if (!authToken || !authToken.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Authorization header required' });
   }
 
+  // Construir URL de Firestore
   const path = req.url.replace(/^\/api\/firestore-proxy/, '');
   const firestoreUrl = `${FIRESTORE_BASE}/projects/${PROJECT_ID}/databases/${DATABASE}/documents${path}`;
 
   try {
+    // Reenviar petición a Firestore
     const firestoreResponse = await fetch(firestoreUrl, {
       method: method,
       headers: {
@@ -76,16 +81,13 @@ export default async function handler(req, res) {
     const wantsXml = acceptHeader.includes('xml');
 
     if (wantsXml) {
+      // Devolver XML
       const xmlOutput = firestoreJsonToXml(firestoreData, 'firestoreResponse');
-      return res
-        .status(statusCode)
-        .setHeader('Content-Type', 'application/xml; charset=utf-8')
-        .send(xmlOutput);
+      res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      return res.status(statusCode).send(xmlOutput);
     } else {
-      return res
-        .status(statusCode)
-        .setHeader('Content-Type', 'application/json')
-        .json(firestoreData);
+      // Devolver JSON
+      return res.status(statusCode).json(firestoreData);
     }
   } catch (error) {
     console.error('Proxy error:', error);
